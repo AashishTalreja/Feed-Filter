@@ -8,8 +8,11 @@ class Settings(BaseSettings):
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
     confidence_threshold: float = 0.42  # cosine similarity gate for LLM fallback
-    anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-sonnet-4-5"
+    # LLM fallback: any OpenAI-compatible provider (see app/llm.py).
+    llm_provider: str = "groq"  # groq | gemini | openai
+    llm_api_key: str | None = None
+    llm_model: str | None = None  # None -> provider default
+    llm_base_url: str | None = None  # None -> provider default
     rag_neighbor_count: int = 3
 
 

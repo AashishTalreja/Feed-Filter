@@ -14,7 +14,8 @@ previously-classified videos from the cache table as few-shot context —
 this is the "retrieval" half of RAG.
 
 Stage 3 (llm_fallback): hand the video + retrieved examples + category list
-to an LLM to make the final call. Only runs if ANTHROPIC_API_KEY is set;
+to an LLM (Groq/Gemini/any OpenAI-compatible API, see app/llm.py) to
+make the final call. Only runs if LLM_API_KEY is set;
 otherwise the pipeline accepts the embedding-only guess even if it's below
 the confidence threshold, rather than failing the request.
 
@@ -25,7 +26,6 @@ re-classified twice.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from typing import Optional, TypedDict
 
@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app import embeddings as emb
 from app import focus
+from app import llm
 from app.config import settings
 from app.models import Category, ClassificationCache
 
@@ -97,7 +98,7 @@ def node_embed_and_match(state: PipelineState) -> PipelineState:
 def route_after_embed(state: PipelineState) -> str:
     if state["best_confidence"] >= settings.confidence_threshold:
         return "finalize"
-    if not settings.anthropic_api_key:
+    if not llm.is_configured():
         return "finalize"
     return "rag_retrieve"
 
@@ -124,85 +125,31 @@ def node_rag_retrieve(state: PipelineState) -> PipelineState:
 
 
 def node_llm_fallback(state: PipelineState) -> PipelineState:
-    from anthropic import Anthropic
-
     from app.vision import fetch_thumbnail_base64
 
-    client = Anthropic(api_key=settings.anthropic_api_key)
-    category_options = "\n".join(
-        f"- {k}: {v[0]}" for k, v in state["category_embeddings"].items()
-    )
-    examples_block = "\n".join(
-        f'  - "{e["title"]}" -> {e["category"]}' for e in state.get("similar_examples", [])
-    ) or "  (none)"
-
+    categories = {key: value[0] for key, value in state["category_embeddings"].items()}
     thumbnail = fetch_thumbnail_base64(state.get("thumbnail_url"))
-    used_vision = thumbnail is not None
-
-    vision_instruction = (
-        "Look at the attached thumbnail image as well as the text below — "
-        "the thumbnail often reveals the true content type even when the "
-        "title is ambiguous or clickbait-y (e.g. a gaming video titled "
-        '"X EXPLAINED" should be classified as Gaming, not Education, if '
-        "the thumbnail clearly shows gameplay).\n\n"
-        if used_vision else ""
-    )
-
-    prompt = f"""You are classifying a YouTube video into exactly one official YouTube category.
-
-{vision_instruction}Categories:
-{category_options}
-
-Similar previously-classified videos (for reference):
-{examples_block}
-
-Video to classify:
-Title: {state['title']}
-Channel: {state['channel']}
-Description: {state.get('description', '')}
-
-Respond with ONLY a JSON object, no other text: {{"category": "<category_key>", "confidence": <0.0-1.0>}}"""
-
-    if used_vision:
-        b64_data, media_type = thumbnail
-        content = [
-            {
-                "type": "image",
-                "source": {"type": "base64", "media_type": media_type, "data": b64_data},
-            },
-            {"type": "text", "text": prompt},
-        ]
-    else:
-        content = prompt
 
     try:
-        response = client.messages.create(
-            model=settings.anthropic_model,
-            max_tokens=100,
-            messages=[{"role": "user", "content": content}],
+        result = llm.classify(
+            title=state["title"],
+            channel=state["channel"],
+            description=state.get("description", ""),
+            categories=categories,
+            examples=state.get("similar_examples", []),
+            thumbnail=thumbnail,
         )
-        raw = response.content[0].text.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(raw)
-        category_key = parsed.get("category")
-        confidence = float(parsed.get("confidence", 0.5))
-
-        if category_key not in state["category_embeddings"]:
-            # Model returned a key outside our taxonomy - don't trust it,
-            # fall back to the embedding-only guess instead.
-            category_key = state["best_category"]
-            confidence = state["best_confidence"]
-
-        label = state["category_embeddings"].get(category_key, (None,))[0]
         return {
             **state,
-            "used_vision": used_vision,
-            "final_category": category_key,
-            "final_label": label,
-            "final_confidence": confidence,
+            "used_vision": result.used_vision,
+            "final_category": result.category,
+            "final_label": categories[result.category],
+            "final_confidence": result.confidence,
             "method": "llm",
         }
     except Exception as exc:  # noqa: BLE001 - never let a flaky LLM call 500 the request
+        # Covers API errors, rate limits, unparseable output and categories
+        # outside the taxonomy: fall back to the embedding-only guess.
         logger.warning("LLM fallback failed, using embedding guess: %s", exc)
         return {
             **state,
