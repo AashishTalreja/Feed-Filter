@@ -12,10 +12,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="YouTube Content Filter API",
+    title="Feed Filter API",
     description=(
-        "Embedding + LLM-backed classification service for the YouTube "
-        "Content Filter browser extension."
+        "Embedding + LLM-backed classification service for the Feed Filter "
+        "browser extension."
     ),
     version="0.1.0",
 )
