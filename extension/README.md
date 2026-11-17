@@ -9,7 +9,7 @@ and shorts shelf.
 1. Go to `chrome://extensions`
 2. Turn on **Developer mode** (top right)
 3. Click **Load unpacked**
-4. Select this folder (`youtube-content-filter`)
+4. Select this folder (`extension/`)
 5. Click the extension icon in your toolbar, turn the filter **on**, and
    check the categories you want to see (e.g. Sports, News & Politics)
 6. Go to youtube.com — anything outside your chosen categories collapses
@@ -19,7 +19,7 @@ and shorts shelf.
 
 By default the extension classifies with local keyword matching only —
 fast, but blunt (see `classifier.js`). If you've deployed the
-[classification backend](../ycf-backend), you can switch to it:
+[classification backend](../backend), you can switch to it:
 
 1. Start the backend (`docker compose up` in the backend folder, or run it
    locally — see its README).

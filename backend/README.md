@@ -1,4 +1,4 @@
-# YouTube Content Filter — Classification Backend
+# Feed Filter — Classification Backend
 
 The backend service behind the browser extension. Replaces the extension's
 brittle keyword classifier with a proper embeddings → RAG → LLM pipeline,

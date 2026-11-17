@@ -77,14 +77,14 @@ Two independent signals decide what's shown:
 ## Repo structure
 
 ```
-feed-filter/          Chrome extension (Manifest V3)
+extension/            Chrome extension (Manifest V3)
   ├── manifest.json
   ├── content.js       DOM scanning + local classifier + hide/reveal logic
   ├── background.js    talks to the backend API
   ├── classifier.js    local keyword classifier + focus heuristic
   └── popup.{html,js,css}
 
-ycf-backend/           FastAPI classification service
+backend/               FastAPI classification service
   ├── app/
   │   ├── main.py
   │   ├── classifier_pipeline.py   LangGraph pipeline
@@ -101,13 +101,13 @@ ycf-backend/           FastAPI classification service
 
 **Backend:**
 ```bash
-cd ycf-backend
+cd backend
 cp .env.example .env   # add your ANTHROPIC_API_KEY
 docker compose up --build
 ```
 
 **Extension:**
-1. `chrome://extensions` → enable Developer mode → **Load unpacked** → select the `feed-filter` folder
+1. `chrome://extensions` → enable Developer mode → **Load unpacked** → select the `extension/` folder
 2. Open the extension popup, save the backend's URL, grant the permission prompt, and turn the filter on
 
 Full setup/troubleshooting details are in each folder's own README.
