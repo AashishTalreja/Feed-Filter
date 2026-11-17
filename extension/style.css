@@ -1,0 +1,52 @@
+.ycf-hidden {
+  position: relative !important;
+  min-height: 0 !important;
+  height: 40px !important;
+  overflow: hidden !important;
+  opacity: 0.55;
+}
+
+.ycf-hidden > *:not(.ycf-reveal-strip) {
+  visibility: hidden !important;
+}
+
+.ycf-reveal-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f1f1;
+  color: #606060;
+  font-size: 11px;
+  font-family: Roboto, Arial, sans-serif;
+  border-radius: 8px;
+  z-index: 10;
+  gap: 4px;
+  padding: 0 6px;
+  text-align: center;
+}
+
+.ycf-reveal-action, .ycf-trust-action {
+  cursor: pointer;
+}
+
+.ycf-reveal-action:hover, .ycf-trust-action:hover {
+  text-decoration: underline;
+}
+
+.ycf-trust-action {
+  color: #3ea6ff;
+}
+
+.ycf-revealed-once {
+  height: auto !important;
+  opacity: 1;
+}
+
+.ycf-revealed-once .ycf-reveal-strip {
+  display: none;
+}

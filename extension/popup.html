@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Feed Filter</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <h1>Feed Filter</h1>
+    <label class="toggle">
+      <input type="checkbox" id="enabledToggle" />
+      <span>Filter is on</span>
+    </label>
+  </header>
+
+  <p class="hint">Pick what you actually want to see. Everything else gets collapsed, not deleted — you can still reveal any hidden card.</p>
+
+  <div id="categoryList" class="category-list"></div>
+
+  <div class="backend-section">
+    <label class="toggle">
+      <input type="checkbox" id="backendToggle" />
+      <span>Use smart backend (embeddings + AI)</span>
+    </label>
+    <p class="hint">Off = fast local keyword matching only. On = calls your classification API for more accurate results.</p>
+    <input type="text" id="apiBaseInput" class="api-input" placeholder="http://localhost:8000" />
+    <button id="apiBaseSave" class="save-btn">Save API URL</button>
+  </div>
+
+  <div class="study-section">
+    <label class="toggle">
+      <input type="checkbox" id="studyModeToggle" />
+      <span>📚 Study Mode</span>
+    </label>
+    <p class="hint">Blocks distracting videos even within allowed categories, and hides all Shorts outright. Good for "I need to watch one tutorial without falling into a scroll hole."</p>
+
+    <label class="field-label">Strictness</label>
+    <select id="focusStrictness" class="strictness-select">
+      <option value="0.3">Lenient — only block obvious distractions</option>
+      <option value="0.5">Balanced</option>
+      <option value="0.65">Strict — only calm, educational content</option>
+    </select>
+
+    <label class="field-label">Always block if title contains (comma-separated)</label>
+    <textarea id="blockKeywordsInput" class="keywords-input" placeholder="e.g. prank, reaction, vs, shorts"></textarea>
+    <button id="blockKeywordsSave" class="save-btn">Save Keywords</button>
+  </div>
+
+  <label class="toggle debug-toggle">
+    <input type="checkbox" id="debugToggle" />
+    <span>Debug mode (logs classification to console)</span>
+  </label>
+
+  <footer>
+    <span id="statusMsg" class="status"></span>
+  </footer>
+
+  <script src="classifier.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
