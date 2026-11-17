@@ -1,160 +1,140 @@
-# YouTube Content Filter — Classification Backend
+# Feed Filter
 
-The backend service behind the browser extension. Replaces the extension's
-brittle keyword classifier with a proper embeddings → RAG → LLM pipeline,
-backed by Postgres + pgvector.
+**Category-level content filtering for YouTube — because app blockers don't work.**
 
-**This has been built and smoke-tested end-to-end** against a real
-Postgres+pgvector instance (not just written and hoped-for) — every route
-below was hit with curl and returned the expected result during development.
+Feed Filter is a Chrome extension + AI backend that filters *what* you see within an app, not whether you can open it at all. Pick the categories you actually want (Education, News, Sports, etc.) and everything else on your YouTube feed collapses into a one-line strip — still there if you genuinely need it, but no longer the thing your eyes land on when you open the app "just to check one thing."
 
-## Architecture
+---
+
+## The problem
+
+Screen-time limiters and app blockers operate at the wrong layer. Blocking Instagram or YouTube entirely doesn't work in practice — you reopen the app for a legitimate reason (a work notification, a specific video someone sent you) and end up doomscrolling anyway, because once the app is open, *everything* in it is equally accessible. The blocker can't tell the difference between the video you meant to watch and the forty minutes of recommended content next to it.
+
+Feed Filter works one layer deeper: it reads the actual content on the page in real time and hides what doesn't match your intent, without blocking the app itself.
+
+## How it works
 
 ```
-Chrome Extension (background.js)
-        │  POST /classify {title, channel, description}
+Chrome Extension (content script)
+        │  scans the DOM, extracts title/channel/thumbnail per video
         ▼
-FastAPI (app/main.py)
-        │
+Local keyword classifier (instant, no network)
+        │  applied immediately — nothing flashes visible before disappearing
         ▼
-LangGraph pipeline (app/classifier_pipeline.py)
-        │
-   ┌────┴─────────────────────────────────────────┐
-   │ 1. embed_and_match                            │
-   │    - embed video text (sentence-transformers) │
-   │    - cosine-similarity match vs 31 category    │
-   │      anchor embeddings (stored in Postgres,    │
-   │      pgvector column)                          │
-   └────┬───────────────────────────────────────────┘
-        │ confidence >= threshold?
-   ┌────┴─────┐                    ┌──────────────────────┐
-   │  YES      │  NO + LLM key set │                      │
-   ▼           └──────────────────▶│ 2. rag_retrieve       │
-finalize                            │    top-k similar      │
-                                     │    past classifications│
-                                     │    from cache (pgvector│
-                                     │    nearest-neighbor)   │
-                                     └──────┬─────────────────┘
-                                            ▼
-                                     3. llm_fallback
-                                        (Claude call w/ RAG
-                                         examples as context)
-                                            │
-                                            ▼
-                                       4. finalize
-                                        (write-through cache)
+Background service worker ──► FastAPI backend
+                                     │
+                          LangGraph classification pipeline
+                                     │
+                   ┌─────────────────┴──────────────────┐
+                   │ 1. Embed title + channel text        │
+                   │    (sentence-transformers)            │
+                   │ 2. Cosine-match against 31 official   │
+                   │    YouTube category embeddings         │
+                   │    (pgvector)                          │
+                   └─────────────────┬──────────────────┘
+                          confident? ──yes──► done
+                                     │ no
+                   ┌─────────────────▼──────────────────┐
+                   │ 3. Retrieve similar past             │
+                   │    classifications (RAG)              │
+                   │ 4. Send title + thumbnail image to    │
+                   │    Claude (vision) for a final call   │
+                   └─────────────────┬──────────────────┘
+                                     ▼
+                         Cached result returned to extension
+                                     │
+                                     ▼
+                     Video shown or collapsed in the feed
 ```
 
-## Why this design (talking points for interviews / resume)
+Two independent signals decide what's shown:
+- **Category match** — does this video belong to a category you've allowed?
+- **Focus score** — is this video actually calm/on-task, or is it clickbait/hype dressed up in an allowed category? (A video titled "MATH TRICK THAT WILL BLOW YOUR MIND 🤯" can be nominally "Education" and still be exactly what you're trying to avoid.)
 
-- **Embeddings over keywords**: the browser-extension MVP used keyword
-  matching, which silently fails on any title that doesn't contain a
-  known keyword. Embedding-based cosine similarity generalizes to phrasing
-  the keyword list never anticipated.
-- **Confidence gating, not "always call the LLM"**: most videos are cheap
-  to classify with embeddings alone. The LLM is only invoked when the
-  embedding match is ambiguous — keeps latency and cost down at scale.
-- **RAG before the LLM call**: retrieving similar previously-classified
-  videos as few-shot context measurably improves LLM classification
-  consistency versus a cold prompt with zero examples.
-- **Vision on the fallback path only**: when the LLM fallback fires, the
-  video's thumbnail is fetched and sent alongside the title as a vision
-  input to Claude. This directly fixes a real failure mode of text-only
-  classification — a gaming video titled "X EXPLAINED" is textually
-  identical to an actual explainer video, but the thumbnail usually makes
-  the true content obvious. Reserved for the fallback path (not every
-  video) to keep the fast path cheap.
-- **Write-through caching**: every classification (embedding-only or
-  LLM-assisted) is cached by a hash of (title, channel), so the same video
-  is never billed or computed twice.
-- **Graceful degradation**: `app/embeddings.py` falls back to a
-  deterministic hashing pseudo-embedding if the real model can't load —
-  this is what let the whole pipeline be tested in a sandboxed environment
-  with no route to huggingface.co, without the app crashing.
+**Study Mode** combines both with a hard rule: Shorts are blocked outright regardless of category, since the format itself — not any specific video — is what's built for endless scrolling.
 
-## Local setup
+## Key features
 
-### Option A — Docker (recommended)
+- **Category filtering** across all 31 official YouTube video categories
+- **Study Mode** — focus-score threshold + automatic Shorts blocking + custom block-keyword overrides
+- **Trusted channels** — always-allow list that bypasses classification entirely
+- **Multimodal fallback** — when text alone is ambiguous (e.g. "This Game EXPLAINED" reads identically to a real explainer, text-only), the backend sends the thumbnail image itself to Claude's vision model for the final call
+- **Cost-conscious pipeline** — fast local matching first, embeddings second, LLM/vision only invoked when genuinely uncertain
+- **Reveal, don't delete** — anything hidden is one click away, so the tool never feels like it's fighting you
 
+## Tech stack
+
+| Layer | Tech |
+|---|---|
+| Extension | JavaScript, Chrome Manifest V3, MutationObserver |
+| Backend | Python, FastAPI |
+| Orchestration | LangGraph |
+| Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`) |
+| Vector search | PostgreSQL + pgvector |
+| LLM / Vision | Claude (Anthropic API) |
+| Infra | Docker, Docker Compose |
+
+## Repo structure
+
+```
+feed-filter/          Chrome extension (Manifest V3)
+  ├── manifest.json
+  ├── content.js       DOM scanning + local classifier + hide/reveal logic
+  ├── background.js    talks to the backend API
+  ├── classifier.js    local keyword classifier + focus heuristic
+  └── popup.{html,js,css}
+
+ycf-backend/           FastAPI classification service
+  ├── app/
+  │   ├── main.py
+  │   ├── classifier_pipeline.py   LangGraph pipeline
+  │   ├── embeddings.py            sentence-transformers wrapper
+  │   ├── focus.py                 focus/distraction scoring
+  │   ├── vision.py                thumbnail fetch for vision fallback
+  │   ├── categories.py            official YouTube taxonomy
+  │   └── routers/                 classify / trust / settings endpoints
+  ├── docker-compose.yml
+  └── Dockerfile
+```
+
+## Setup
+
+**Backend:**
 ```bash
+cd ycf-backend
+cp .env.example .env   # add your ANTHROPIC_API_KEY
 docker compose up --build
 ```
 
-This starts Postgres (with pgvector pre-installed via the
-`pgvector/pgvector:pg16` image) and the API on `localhost:8000`.
+**Extension:**
+1. `chrome://extensions` → enable Developer mode → **Load unpacked** → select the `feed-filter` folder
+2. Open the extension popup, save the backend's URL, grant the permission prompt, and turn the filter on
 
-### Option B — Manual
+Full setup/troubleshooting details are in each folder's own README.
 
-```bash
-pip install -r requirements.txt
-# requires a running Postgres with the `vector` extension creatable by
-# the connecting user (or pre-created by a superuser)
-cp .env.example .env  # edit DATABASE_URL etc.
-uvicorn app.main:app --reload
-```
+## Development notes — what actually broke and how it got fixed
 
-### Verify it's up
+This project went through a few real debugging cycles worth mentioning, because the failures were more informative than the happy path:
 
-```bash
-curl http://localhost:8000/health
-curl -X POST http://localhost:8000/classify \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Stock market crashes as Fed hikes rates","channel":"Yahoo Finance"}'
-```
+- **v1 (keyword-only) over-hid almost everything.** Most video titles simply don't contain literal keywords for their genre, so most videos fell into "uncategorized" and got hidden by default. This wasn't a filtering-logic bug — it was a classifier coverage problem, fixed by moving to embedding-based semantic matching instead of exact keyword hits.
+- **Extraction silently broke mid-project** when YouTube rolled out a new internal component (`yt-lockup-view-model`), replacing the classic `#video-title` / `#channel-name` IDs the extension depended on. Fixed by extracting the video ID from the link's `href` instead — a much more stable signal than any specific class name, since YouTube's routing structure changes far less often than its internal markup.
+- **Category alone wasn't sufficient** even after fixing extraction — a video correctly tagged "Education" could still be a hype-driven clickbait video. This is what motivated the separate focus-score axis rather than trying to force everything through a single classification dimension.
 
-## Endpoints
+## Known limitations
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/classify` | Classify a video; cached, trusted-channel-aware |
-| POST | `/trust` | Mark a channel as always-allowed for a user |
-| GET | `/trust/{user_id}` | List a user's trusted channels |
-| DELETE | `/trust/{user_id}/{channel}` | Remove a trusted channel |
-| GET | `/settings/{user_id}` | Get filter settings |
-| PUT | `/settings/{user_id}` | Update filter settings |
-| GET | `/health` | Liveness check |
+- No auth on the backend yet — fine for personal/self-hosted use, not ready for arbitrary public traffic without adding API keys + rate limiting first
+- Classification quality depends on the real embedding model being loaded; if `sentence-transformers` fails to install, the backend falls back to a much weaker hashing-based embedding so the pipeline doesn't crash, but accuracy drops noticeably
+- Vision fallback only activates when `ANTHROPIC_API_KEY` is set and the text-only match is already ambiguous — no key means no vision-assisted classification, silently
+- CORS is wide open (`*`) for local development and should be scoped to the specific extension origin before any public deployment
 
-## Wiring up the extension
+## Roadmap
 
-Call this from the extension's **background service worker**
-(`background.js`), not the content script — a fetch from a content script
-is subject to the page's CORS policy, while a fetch from the background
-worker (with `host_permissions` declared in `manifest.json` for your API's
-domain) bypasses that restriction. The background worker can relay results
-to the content script via `chrome.runtime.sendMessage` /
-`chrome.tabs.sendMessage`.
+- [ ] Labeled evaluation set + measured accuracy numbers
+- [ ] Automated test suite (pytest)
+- [ ] Public deployment + Chrome Web Store listing
+- [ ] Per-install API keys + rate limiting
+- [ ] Android version via Accessibility Service, for filtering outside the browser
 
-## Deploying (AWS)
+## License
 
-1. Push the image to ECR: `docker build -t ycf-api . && docker push <ecr-repo>`
-2. Run Postgres via RDS with the `pgvector` extension enabled (RDS Postgres
-   ≥ 15 supports it — enable via `CREATE EXTENSION vector;` as the RDS
-   master user, which has the needed privilege unlike a regular app user).
-3. Run the API container on ECS Fargate (or a single EC2 instance for a
-   cheaper demo deployment) with `DATABASE_URL` and `ANTHROPIC_API_KEY`
-   set as environment variables / secrets.
-4. Point the extension's `host_permissions` and API base URL at the
-   deployed endpoint.
-
-## Known limitations (be upfront about these if asked)
-
-- **No auth yet.** `user_id` is just a free-text string the client sends —
-  fine for a personal project demo, not production-ready. Adding real auth
-  (even a simple API key per install) would be a natural next step to
-  mention as "aware of, scoped out for MVP."
-- **CORS is wide open (`*`)** for local dev; should be locked to the
-  specific `chrome-extension://<id>` origin before any public deployment.
-- **Embedding model choice is a default, not a tuned one.**
-  `all-MiniLM-L6-v2` is fast and small but not fine-tuned on YouTube-style
-  short titles specifically — a natural improvement is fine-tuning or
-  swapping in a model trained on similar short-text classification tasks.
-- **The LLM fallback prompt has no output-schema enforcement** beyond
-  "please return JSON" — for production you'd want Claude's structured
-  output / tool-use mode instead of parsing free-text JSON.
-- **Vision only helps if `ANTHROPIC_API_KEY` is set.** Without it, the
-  pipeline never reaches the LLM fallback stage at all (by design — no
-  wasted work with nothing to call), so thumbnails are fetched but never
-  actually used. Set the key to get the accuracy benefit.
-- **Thumbnail fetch is host-allowlisted** (`app/vision.py`) to YouTube's
-  own CDN domains to avoid the backend being used as an open URL-fetching
-  proxy (SSRF) via a spoofed `thumbnail_url`.
+MIT
