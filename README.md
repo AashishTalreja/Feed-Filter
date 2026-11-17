@@ -38,7 +38,7 @@ Background service worker ──► FastAPI backend
                    │ 3. Retrieve similar past             │
                    │    classifications (RAG)              │
                    │ 4. Send title + thumbnail image to    │
-                   │    Claude (vision) for a final call   │
+                   │    a vision LLM for a final call      │
                    └─────────────────┬──────────────────┘
                                      ▼
                          Cached result returned to extension
@@ -58,7 +58,7 @@ Two independent signals decide what's shown:
 - **Category filtering** across all 31 official YouTube video categories
 - **Study Mode** — focus-score threshold + automatic Shorts blocking + custom block-keyword overrides
 - **Trusted channels** — always-allow list that bypasses classification entirely
-- **Multimodal fallback** — when text alone is ambiguous (e.g. "This Game EXPLAINED" reads identically to a real explainer, text-only), the backend sends the thumbnail image itself to Claude's vision model for the final call
+- **Multimodal fallback** — when text alone is ambiguous (e.g. "This Game EXPLAINED" reads identically to a real explainer, text-only), the backend sends the thumbnail image itself to a vision-capable LLM for the final call
 - **Cost-conscious pipeline** — fast local matching first, embeddings second, LLM/vision only invoked when genuinely uncertain
 - **Reveal, don't delete** — anything hidden is one click away, so the tool never feels like it's fighting you
 
@@ -71,7 +71,7 @@ Two independent signals decide what's shown:
 | Orchestration | LangGraph |
 | Embeddings | Sentence-Transformers (`all-MiniLM-L6-v2`) |
 | Vector search | PostgreSQL + pgvector |
-| LLM / Vision | Claude (Anthropic API) |
+| LLM / Vision | Any OpenAI-compatible API — Groq (default, Llama 4 Scout), Gemini, OpenAI |
 | Infra | Docker, Docker Compose |
 
 ## Repo structure
@@ -102,7 +102,7 @@ backend/               FastAPI classification service
 **Backend:**
 ```bash
 cd backend
-cp .env.example .env   # add your ANTHROPIC_API_KEY
+cp .env.example .env   # add LLM_API_KEY (free Groq or Gemini key)
 docker compose up --build
 ```
 
@@ -124,7 +124,7 @@ This project went through a few real debugging cycles worth mentioning, because 
 
 - No auth on the backend yet — fine for personal/self-hosted use, not ready for arbitrary public traffic without adding API keys + rate limiting first
 - Classification quality depends on the real embedding model being loaded; if `sentence-transformers` fails to install, the backend falls back to a much weaker hashing-based embedding so the pipeline doesn't crash, but accuracy drops noticeably
-- Vision fallback only activates when `ANTHROPIC_API_KEY` is set and the text-only match is already ambiguous — no key means no vision-assisted classification, silently
+- Vision fallback only activates when `LLM_API_KEY` is set (and `LLM_MODEL` is vision-capable) and the text-only match is already ambiguous — no key means no vision-assisted classification, silently
 - CORS is wide open (`*`) for local development and should be scoped to the specific extension origin before any public deployment
 
 ## Roadmap
